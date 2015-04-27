@@ -1,13 +1,16 @@
 package org.oseraf.bullseye.store
 
-/**
- * Created by nhamblet.
- */
-trait EntityIterationPlugin {
-  def entities: Iterable[EntityStore.ID]
+
+trait EntityIterationSupport[S, ID]
+{
+  def entities(s: S): Iterable[ID]
 }
 
 
-trait RelationshipIterationPlugin {
-  def relationships: Iterable[EntityStore.ID]
+object EntityIterationSupport {
+  implicit def MapHasEntityIterationSupport[K, V]: EntityIterationSupport[Map[K, V], K] =
+    new EntityIterationSupport[Map[K, V], K] {
+      override def entities(s: Map[K, V]) =
+        s.keys
+    }
 }

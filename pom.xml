@@ -17,7 +17,7 @@
 
     <properties>
         <scala.major.version>2.10</scala.major.version>
-        <scala.version>2.10.0</scala.version>
+        <scala.version>2.10.5</scala.version>
         <scalatra.version>2.2.2</scalatra.version>
         <javax.servlet.version>3.1.0</javax.servlet.version>
         <joda-time.version>2.1</joda-time.version>
@@ -33,6 +33,8 @@
     </properties>
 
     <build>
+        <sourceDirectory>src/main/scala</sourceDirectory>
+        <testSourceDirectory>src/test/scala</testSourceDirectory>
         <pluginManagement>
             <plugins>
                 <plugin>
@@ -224,6 +226,40 @@
                 <artifactId>jetty-jsp</artifactId>
                 <version>${jetty.version}</version>
             </dependency>
+            <dependency>
+                <groupId>org.specs2</groupId>
+                <artifactId>specs2-core_${scala.major.version}</artifactId>
+                <version>3.4</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.specs2</groupId>
+                <artifactId>specs2-junit_${scala.major.version}</artifactId>
+                <version>3.4</version>
+                <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>junit</groupId>
+                <artifactId>junit</artifactId>
+                <version>4.11</version>
+                <scope>test</scope>
+            </dependency>
         </dependencies>
     </dependencyManagement>
+
+    <profiles>
+        <profile>
+            <repositories>
+                <repository>
+                    <snapshots>
+                        <enabled>false</enabled>
+                    </snapshots>
+                    <id>bintray-scalaz-releases</id>
+                    <name>bintray</name>
+                    <url>http://dl.bintray.com/scalaz/releases</url>
+                </repository>
+            </repositories>
+            <id>bintray</id>
+        </profile>
+    </profiles>
 </project>

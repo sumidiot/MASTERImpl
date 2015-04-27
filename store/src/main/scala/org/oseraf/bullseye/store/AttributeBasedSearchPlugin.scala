@@ -1,64 +1,116 @@
 package org.oseraf.bullseye.store
 
-import com.tinkerpop.blueprints.Contains
-import org.oseraf.bullseye.store.impl.blueprints.BlueprintsGraphStore
+import java.util.Comparator
 
-import scala.collection.JavaConversions._
-import scala.util.{Failure, Success, Try}
-/**
- * Created by nhamblet.
- */
-trait AttributeBasedNaivelyFuzzySearchPlugin {
-  // returns scores from 0 to 1
-  def search(key: AttributeContainer.KEY, value: AttributeContainer.VALUE): Iterable[(EntityStore.ID, Double)]
+
+trait AttributeSearchSupport[S, AKey, AVal, ID] {
+  def search(store: S, key: AKey, value: AVal): Iterable[ID]
+}
+
+trait ScoredAttributeSearchSupport[S, AKey, AVal, ID, Score] {
+  def scoredSearch(store: S, key: AKey, value: AVal): Iterable[(ID, Score)]
 }
 
 
-trait AttributeBasedSearchAvailableOptionsPlugin {
-  def searchableAttributes: Iterable[(AttributeContainer.KEY, String)]
+case class SearchableAttribute[AKey](key: AKey, name: String)
+
+trait SearchableAttributes[S, AKey] {
+  def searchableAttributes(store: S): Iterable[SearchableAttribute[AKey]]
 }
 
-trait BruteForceAttributeBasedNaivelyFuzzySearchPlugin
-  extends AttributeBasedNaivelyFuzzySearchPlugin
-{
-  val store: EntityStore with EntityIterationPlugin
 
-  override def search(key: AttributeContainer.KEY, value: AttributeContainer.VALUE): Iterable[(EntityStore.ID, Double)] =
-    store.entities.filter( entityId => {
-      val attrMatch = attr(entityId, store.entity(entityId), key, "")
-      Try(attrMatch.matches("(?i).*" + value + ".*")) match {
-        case Success(v) => v
-        case Failure(e) => Try(attrMatch.matches(value)) match {
-          case Success(v) => v
-          case Failure(e) => false
-        }
+trait AttributeComparator[A, S] {
+  def agreement(left: A, right: A): S
+}
+
+object AttributeComparator {
+  implicit def ComparatorIsAttributeComparator[A](cmp: Comparator[A]): AttributeComparator[A, Int] =
+    new AttributeComparator[A, Int] {
+      override def agreement(left: A, right: A): Int =
+        cmp.compare(left, right)
+    }
+}
+
+trait BooleanAttributeComparator[A]
+  extends AttributeComparator[A, Boolean]
+
+object BooleanAttributeComparator {
+  implicit def ComparatorIsBooleanAttributeComparator[A](cmp: Comparator[A]): BooleanAttributeComparator[A] =
+    new BooleanAttributeComparator[A] {
+      override def agreement(left: A, right: A): Boolean =
+        cmp.compare(left, right) == 0
+    }
+}
+
+trait AgreementAcceptor[S] {
+  def accept(score: S): Boolean
+}
+
+object AgreementAcceptor {
+  def above(threshold: Double): AgreementAcceptor[Double] =
+    new AgreementAcceptor[Double] {
+      override def accept(score: Double) =
+        score > threshold
+    }
+
+  def below(threshold: Double): AgreementAcceptor[Double] =
+    new AgreementAcceptor[Double] {
+      override def accept(score: Double) =
+        score > threshold
+    }
+
+  def boolean: AgreementAcceptor[Boolean] =
+    new AgreementAcceptor[Boolean] {
+      override def accept(score: Boolean): Boolean =
+        score
+    }
+}
+
+
+object AttributeSearchSupport {
+  implicit def EntityIterationAllowsBruteForceAttributeSearch[S, AKey, AVal, ID, Entity, Score](
+      implicit
+        entity: ReadEntityStore[S, ID, Entity],
+        attr: ReadEntityStore[Entity, AKey, AVal],
+        iteration: EntityIterationSupport[S, ID],
+        cmp: AttributeComparator[AVal, Score],
+        accept: AgreementAcceptor[Score]
+    ): AttributeSearchSupport[S, AKey, AVal, ID] = {
+    new AttributeSearchSupport[S, AKey, AVal, ID] {
+      override def search(store: S, key: AKey, value: AVal): Iterable[ID] = {
+        iteration
+          .entities(store)
+          .filter(entityId => {
+            accept.accept(cmp.agreement(attr.readEntity(entity.readEntity(store, entityId), key), value))
+          })
       }
-    }).map(eid => (eid, score(attr(eid, store.entity(eid), key, ""), value))).toSeq.sortBy(-_._2)
-
-  def score(actual: AttributeContainer.VALUE, expected: AttributeContainer.VALUE): Double = {
-    actual match {
-      case s: String if s == expected                                 => 1.0
-      case s: String if s.equalsIgnoreCase(expected)                  => 0.95
-      case s: String if s.matches(".*\\b" + expected + "\\b.*")       => 0.85
-      case s: String if s.matches("(?i).*\\b" + expected + "\\b.*")   => 0.80
-      case s: String if s.matches(".*\\b" + expected + ".*")          => 0.75
-      case s: String if s.matches("(?i).*\\b" + expected + ".*")      => 0.70
-      case _                                                          => 0.50
     }
   }
 
-  private def attr(entityId: EntityStore.ID, entity: Entity, key: AttributeContainer.KEY, default: AttributeContainer.VALUE = "") =
-    if (key == AttributeBasedSearch.FAKE_ID_ATTRIBUTE_KEY) entityId
-    else entity.attribute(key, default)
-}
+  implicit object StringComparator extends BooleanAttributeComparator[String] {
+    override def agreement(left: String, right: String): Boolean =
+      left.equals(right)
+  }
 
-trait IndexedBlueprintsFuzzyVertexSearchPlugin extends AttributeBasedNaivelyFuzzySearchPlugin with BruteForceAttributeBasedNaivelyFuzzySearchPlugin {
-  val store:BlueprintsGraphStore with EntityIterationPlugin
-  override def search(key: AttributeContainer.KEY, value:AttributeContainer.VALUE):Iterable[(EntityStore.ID, Double)] = {
-    store.graph.query().has(key, Contains.IN, value).vertices().toList.map(v => (v.getId.toString, score(v.getProperty(key), value)))
+  implicit object FuzzyStringComparator extends AttributeComparator[String, Double] {
+    override def agreement(left: String, right: String): Double =
+      left match {
+        case s: String if s.equals(right)                            => 1.0
+        case s: String if s.equalsIgnoreCase(right)                  => 0.95
+        case s: String if s.matches(".*\\b" + right + "\\b.*")       => 0.85
+        case s: String if s.matches("(?i).*\\b" + right + "\\b.*")   => 0.80
+        case s: String if s.matches(".*\\b" + right + ".*")          => 0.75
+        case s: String if s.matches("(?i).*\\b" + right + ".*")      => 0.70
+        case _                                                       => 0.0
+      }
   }
 }
 
-object AttributeBasedSearch {
-  final val FAKE_ID_ATTRIBUTE_KEY = "OSERAF:search/id"
-}
+//trait TestMapSupport {
+//  def findMe[S](store: S)(implicit search: AttributeSearchSupport[S, String, String, String]) =
+//    search.search(store, "name", "Nick")
+//
+//  val myStore = mutable.Map[String, Map[String, String]]()
+//
+//  val res = findMe(myStore)
+//}
